@@ -1,0 +1,9 @@
+gcc -c huffman.cpp huffman_wrap.cxx -I /usr/include/python2.7
+
+swig -python -c++ huffman.i
+
+
+import huffman
+s=huffman.CHuffman()
+s.Init()
+s.Compress('ss')

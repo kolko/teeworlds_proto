@@ -1,0 +1,85 @@
+# make library for import C++ code to Python. (c) A.V. Ivanov, Aug 2010, Moscow
+#-------------------------------------------------------------------------------------
+CXX=g++ -fPIC
+# compiler
+LD=g++ -shared
+# linker
+PY=/usr/include/python2.7 # path to Python.h
+catchall=yes
+# catch all C++ exception, [yes/no]
+unref=bool char short int long float double # convert ’type& --> type’ for all return values
+#-------------------------------------------------------------------------------------
+# name --- main target and module name
+# headers --- user’s headers for SWIG (with extentions)
+# modules --- user’s modules for compile and link (with extentions)
+# objects --- user’s object files for linking (need make by users self)
+# istart --- user’s .i-file to include at begin SWIG file "$(name).i"
+# ifinish --- user’s .i-file to append to end SWIG file "$(name).i"
+# pickling --- user’s objects for pickling
+# setstate --- user’s objects with __C_setstate__ methods
+# CXXOPT --- compile options
+# LINKOPT --- linker options
+# SWIGOPT --- SWIG options
+#-------------------------------------------------------------------------------------
+# main target
+#-------------------------------------------------------------------------------------
+$(name) : _$(name).so $(name).py;
+#-------------------------------------------------------------------------------------
+# start swig
+#-------------------------------------------------------------------------------------
+$(name).py $(name)_wrap.cxx : $(name).i $(headers)
+	swig $(SWIGOPT) -python -c++ $(name).i
+#-------------------------------------------------------------------------------------
+# link shared library
+#-------------------------------------------------------------------------------------
+_$(name).so : $(name)_wrap.o $(addsuffix .o,$(basename $(modules))) $(objects)
+	$(LD) $(LINKOPT) -o $@ $(name)_wrap.o $(addsuffix .o,$(basename $(modules))) $(objects)
+#-------------------------------------------------------------------------------------
+# compile object files
+#-------------------------------------------------------------------------------------
+define compile
+$(CXX) $(CXXOPT) -I$(PY) -c $m
+endef
+$(foreach m,$(modules),$(subst \,,$(shell g++ -DPYTHON -I$(PY) $(CXXOPT) -M $m)); $(compile))
+#-------------------------------------------------------------------------------------
+$(subst \,,$(shell if [ -f $(name)_wrap.cxx ]; then g++ -M -I$(PY) $(CXXOPT) $(name)_wrap.cxx; else echo $(name)_wrap.o : $(name)_wrap.cxx $(headers); fi))
+	$(CXX) -I$(PY) -c $(name)_wrap.cxx
+#-------------------------------------------------------------------------------------
+# make .i file
+#-------------------------------------------------------------------------------------
+$(name).i : $(lastword $(MAKEFILE_LIST)) $(istart) $(ifinish)
+	echo "%module $(name)" > $@
+	if [ -f "$(istart)" ] ; then cat $(istart) >> $@ ; fi
+ifeq ($(catchall),yes)
+	echo "%exception { try{ \$$action }catch( const char *e ){ PyErr_SetString(PyExc_RuntimeError, e ); return NULL; }catch(...){ return NULL; } }" >> $@
+endif
+ifneq ($(setstate),)
+	echo "%pythoncode %{def _sp_C_setstate( self, state ):" >> $@
+	echo "if not hasattr( self, ’this’ ) : self.__init__()" >> $@
+	echo "self.__C_setstate__(state)" >> $@
+	echo "%}" >> $@
+endif
+ifneq ($(pickling),)
+	echo "%pythoncode %{def _sp_setstate( self, state ):" >> $@
+	echo "if not hasattr( self, ’this’ ) : self.__init__()" >> $@
+	echo "for k, v in state.items() :" >> $@
+	echo "if self.__swig_setmethods__.has_key( k ) : setattr( self, k, v )" >> $@
+	echo "%}" >> $@
+endif
+	if [ "$(findstring bool,$(unref))" ]; then echo "%typemap(out) bool& %{ \$$result=PyBool_FromLong ( *\$$1 ); %}" >> $@; fi
+	if [ "$(findstring char,$(unref))" ]; then echo "%typemap(out) char& %{ \$$result=PyInt_FromLong ( *\$$1 ); %}" >> $@; fi
+	if [ "$(findstring short,$(unref))" ]; then echo "%typemap(out) short& %{ \$$result=PyInt_FromLong ( *\$$1 ); %}" >> $@; fi
+	if [ "$(findstring int,$(unref))" ]; then echo "%typemap(out) int& %{ \$$result=PyInt_FromLong ( *\$$1 ); %}" >> $@; fi
+	if [ "$(findstring long,$(unref))" ]; then echo "%typemap(out) long& %{ \$$result=PyInt_FromLong ( *\$$1 ); %}" >> $@; fi
+	if [ "$(findstring float,$(unref))" ]; then echo "%typemap(out) float& %{ \$$result=PyFloat_FromDouble ( *\$$1 ); %}" >> $@; fi
+	if [ "$(findstring double,$(unref))" ]; then echo "%typemap(out) double& %{ \$$result=PyFloat_FromDouble ( *\$$1 ); %}" >> $@; fi
+	echo "%{" >> $@
+	for i in $(headers); do echo "#include \"$$i\"" >> $@ ; done
+	echo "%}" >> $@
+	for i in $(headers); do echo "%include \"$$i\"" >> $@ ; done
+	for i in $(setstate); do echo "%pythoncode %{$$i.__setstate__ = _sp_C_setstate%}" >> $@; done
+	for i in $(pickling); do echo "%pythoncode %{$$i.__setstate__, $$i.__getstate__ =_sp_setstate, lambda self : dict([ (k,getattr( self, k )) for k in self.__swig_getmethods__.keys() ])%}" >> $@; done
+	if [ -f "$(ifinish)" ] ; then cat $(ifinish) >> $@ ; fi
+clean:; -rm $(name)_wrap.cxx $(addsuffix .o,$(basename $(modules))) $(objects) _$(name).so $(name).py
+cleani: clean; -rm $(name).i
+#-------------------------------------------------------------------------------------

@@ -1,0 +1,5 @@
+%module huffman
+%{
+#include "huffman.hpp"
+%}
+%include "huffman.hpp"
